@@ -1,10 +1,11 @@
 package com.wuhumannequin.command;
 
 import com.wuhumannequin.WuhuMannequin;
-import com.wuhumannequin.model.BodyPart;
 import com.wuhumannequin.model.PlayerModel;
 import com.wuhumannequin.model.PlayerModelPose;
 import com.wuhumannequin.model.PlayerModelPoses;
+import com.wuhumannequin.skin.SkinCache;
+import com.wuhumannequin.skin.SkinTexture;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import net.kyori.adventure.text.Component;
@@ -72,6 +73,8 @@ public class MannequinCommand implements BasicCommand {
             case "spin" -> handleSpin(player);
             case "pose" -> handlePose(player, args);
             case "remove" -> handleRemove(player);
+            case "reload" -> handleReload(player);
+            case "fetchskin" -> handleFetchSkin(player);
             default -> showHelp(player);
         }
     }
@@ -79,7 +82,7 @@ public class MannequinCommand implements BasicCommand {
     @Override
     public @NotNull Collection<String> suggest(@NotNull CommandSourceStack stack, @NotNull String[] args) {
         if (args.length <= 1) {
-            return filter(List.of("spawn", "spin", "pose", "remove"), args.length > 0 ? args[0] : "");
+            return filter(List.of("spawn", "spin", "pose", "remove", "reload", "fetchskin"), args.length > 0 ? args[0] : "");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("pose")) {
             return filter(List.of("standing", "sitting", "tpose", "arms_forward"), args[1]);
@@ -105,8 +108,7 @@ public class MannequinCommand implements BasicCommand {
             return;
         }
 
-        PlayerModel model = new PlayerModel();
-        model.setHeadProfile(player.getPlayerProfile());
+        PlayerModel model = createModelForPlayer(player);
         PlayerModelPose pose = PlayerModelPoses.STANDING;
         model.spawn(player.getWorld(), player.getLocation(),
                 yawRotation(player.getLocation().getYaw()), pose);
@@ -120,8 +122,7 @@ public class MannequinCommand implements BasicCommand {
         UUID uuid = player.getUniqueId();
         handleRemove(player); // clean up any existing
 
-        PlayerModel model = new PlayerModel();
-        model.setHeadProfile(player.getPlayerProfile());
+        PlayerModel model = createModelForPlayer(player);
         PlayerModelPose pose = PlayerModelPoses.STANDING;
         model.spawn(player.getWorld(), player.getLocation(), new Quaternionf(), pose);
 
@@ -198,6 +199,41 @@ public class MannequinCommand implements BasicCommand {
         msg(player, "Pose set to " + poseName + ".");
     }
 
+    private void handleFetchSkin(Player player) {
+        var apiClient = plugin.getSkinApiClient();
+        if (apiClient == null || !apiClient.isConfigured()) {
+            msg(player, "API not configured. Set private-key in config.yml and /mannequin reload.");
+            return;
+        }
+
+        msg(player, "Requesting skin generation from MannequinAPI...");
+        var detector = plugin.getSkinChangeDetector();
+        if (detector != null) {
+            detector.requestSkins(player.getUniqueId());
+            msg(player, "Request sent. Skins will be polled until ready. Use /mannequin spawn after.");
+        } else {
+            // Manual fetch without detector
+            apiClient.getSkins(player.getUniqueId()).thenAccept(result -> {
+                if (result.isPresent()) {
+                    plugin.getSkinCache().put(player.getUniqueId(), result.get());
+                    player.sendMessage(net.kyori.adventure.text.Component.text(
+                            "Skin textures loaded! Use /mannequin spawn to see them.",
+                            NamedTextColor.GREEN));
+                } else {
+                    player.sendMessage(net.kyori.adventure.text.Component.text(
+                            "Skins queued for generation. Try /mannequin fetchskin again in ~20s.",
+                            NamedTextColor.YELLOW));
+                }
+            });
+        }
+    }
+
+    private void handleReload(Player player) {
+        plugin.reloadConfig();
+        plugin.reinitialize();
+        msg(player, "Config reloaded.");
+    }
+
     private void handleRemove(Player player) {
         UUID uuid = player.getUniqueId();
         BukkitRunnable task = spinTasks.remove(uuid);
@@ -222,6 +258,8 @@ public class MannequinCommand implements BasicCommand {
         player.sendMessage(helpLine("/mannequin spin", "Spawn a spinning model (rotation test)"));
         player.sendMessage(helpLine("/mannequin pose <name>", "Change pose (standing, sitting, tpose, arms_forward)"));
         player.sendMessage(helpLine("/mannequin remove", "Remove debug model"));
+        player.sendMessage(helpLine("/mannequin fetchskin", "Manually trigger skin generation"));
+        player.sendMessage(helpLine("/mannequin reload", "Reload config"));
         player.sendMessage(Component.empty());
     }
 
@@ -232,6 +270,20 @@ public class MannequinCommand implements BasicCommand {
 
     private static void msg(Player player, String text) {
         player.sendMessage(Component.text(text, NamedTextColor.GREEN));
+    }
+
+    private PlayerModel createModelForPlayer(Player player) {
+        PlayerModel model = new PlayerModel();
+        model.setHeadProfile(player.getPlayerProfile());
+
+        SkinCache cache = plugin.getSkinCache();
+        if (cache != null) {
+            var textures = cache.get(player.getUniqueId());
+            if (textures != null) {
+                model.setSkinTextures(textures);
+            }
+        }
+        return model;
     }
 
     private static Quaternionf yawRotation(float yawDeg) {

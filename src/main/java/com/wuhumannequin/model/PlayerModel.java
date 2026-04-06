@@ -1,18 +1,23 @@
 package com.wuhumannequin.model;
 
+import com.destroystokyo.paper.profile.PlayerProfile;
+import com.destroystokyo.paper.profile.ProfileProperty;
+import com.wuhumannequin.skin.SkinTexture;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.ItemDisplay;
 import org.bukkit.inventory.ItemStack;
-import com.destroystokyo.paper.profile.PlayerProfile;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.EnumMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * A segmented player model rendered with 6 {@link ItemDisplay} entities.
@@ -83,6 +88,7 @@ public class PlayerModel {
 
     private final EnumMap<BodyPart, ItemDisplay> entities = new EnumMap<>(BodyPart.class);
     private final EnumMap<BodyPart, Material> fallbackMaterials = new EnumMap<>(BodyPart.class);
+    private final EnumMap<BodyPart, SkinTexture> skinTextures = new EnumMap<>(BodyPart.class);
     private PlayerProfile headProfile;
     private boolean spawned;
 
@@ -100,6 +106,30 @@ public class PlayerModel {
     /** Override the fallback material for a specific body part. */
     public void setFallbackMaterial(BodyPart part, Material material) {
         fallbackMaterials.put(part, material);
+    }
+
+    /**
+     * Set signed skin textures for body parts (from MannequinAPI).
+     * Each texture is a PLAYER_HEAD skin where the head region contains
+     * that body part's pixels.
+     */
+    public void setSkinTextures(Map<SkinTexture.BodyPartKey, SkinTexture> textures) {
+        skinTextures.clear();
+        for (var entry : textures.entrySet()) {
+            BodyPart part = bodyPartFromKey(entry.getKey());
+            if (part != null) skinTextures.put(part, entry.getValue());
+        }
+    }
+
+    private static BodyPart bodyPartFromKey(SkinTexture.BodyPartKey key) {
+        return switch (key) {
+            case HEAD -> BodyPart.HEAD;
+            case TORSO -> BodyPart.TORSO;
+            case LEFT_ARM -> BodyPart.LEFT_ARM;
+            case RIGHT_ARM -> BodyPart.RIGHT_ARM;
+            case LEFT_LEG -> BodyPart.LEFT_LEG;
+            case RIGHT_LEG -> BodyPart.RIGHT_LEG;
+        };
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -234,8 +264,14 @@ public class PlayerModel {
     }
 
     private ItemStack createItem(BodyPart part) {
-        Material material = fallbackMaterials.getOrDefault(part, DEFAULT_MATERIALS.get(part));
+        // If we have a signed skin texture for this body part, use it as a PLAYER_HEAD
+        SkinTexture skinTex = skinTextures.get(part);
+        if (skinTex != null) {
+            return createTexturedHead(skinTex);
+        }
 
+        // Head part: use the player's actual profile if available
+        Material material = fallbackMaterials.getOrDefault(part, DEFAULT_MATERIALS.get(part));
         if (part == BodyPart.HEAD && material == Material.PLAYER_HEAD && headProfile != null) {
             ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
@@ -244,7 +280,21 @@ public class PlayerModel {
             return skull;
         }
 
+        // Fallback: colored block
         return new ItemStack(material);
+    }
+
+    private ItemStack createTexturedHead(SkinTexture texture) {
+        ItemStack skull = new ItemStack(Material.PLAYER_HEAD);
+        SkullMeta meta = (SkullMeta) skull.getItemMeta();
+
+        // Create a profile with the signed texture property
+        PlayerProfile profile = Bukkit.createProfile(UUID.randomUUID(), "");
+        profile.setProperty(new ProfileProperty("textures", texture.value(), texture.signature()));
+        meta.setPlayerProfile(profile);
+
+        skull.setItemMeta(meta);
+        return skull;
     }
 
     // ── Transform result ────────────────────────────────────────────────────
