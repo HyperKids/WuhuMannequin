@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+
+# PaperMC Run Directory
+run/
+
+# macOS
+.DS_Store
+._*
+
+# Compiled classes
+*.class
+
+# Environment
+.env

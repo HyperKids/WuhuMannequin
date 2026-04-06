@@ -1,0 +1,11 @@
+name: WuhuMannequin
+version: '0.1.0'
+main: com.wuhumannequin.WuhuMannequin
+description: Segmented player model renderer using display entities
+api-version: '1.21'
+author: iyk
+
+permissions:
+  wuhumannequin.debug:
+    description: Access to /mannequin debug commands
+    default: op
