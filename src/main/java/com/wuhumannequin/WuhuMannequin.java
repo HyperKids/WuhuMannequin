@@ -1,6 +1,7 @@
 package com.wuhumannequin;
 
 import com.wuhumannequin.command.MannequinCommand;
+import com.wuhumannequin.model.PlayerModel;
 import com.wuhumannequin.skin.SkinApiClient;
 import com.wuhumannequin.skin.SkinCache;
 import com.wuhumannequin.skin.SkinChangeDetector;
@@ -21,6 +22,10 @@ public class WuhuMannequin extends JavaPlugin {
     public void onEnable() {
         instance = this;
         saveDefaultConfig();
+
+        // Interpolation setting
+        PlayerModel.setInterpolationTicks(getConfig().getInt("interpolation-ticks", 3));
+        getLogger().info("Interpolation ticks: " + PlayerModel.getInterpolationTicks());
 
         // Skin API integration
         String apiUrl = getConfig().getString("api.url", "http://localhost:3001");
@@ -81,6 +86,9 @@ public class WuhuMannequin extends JavaPlugin {
      * Called by the reload command.
      */
     public void reinitialize() {
+        PlayerModel.setInterpolationTicks(getConfig().getInt("interpolation-ticks", 3));
+        getLogger().info("Interpolation ticks: " + PlayerModel.getInterpolationTicks());
+
         if (skinChangeDetector != null) {
             skinChangeDetector.shutdown();
             org.bukkit.event.HandlerList.unregisterAll(skinChangeDetector);

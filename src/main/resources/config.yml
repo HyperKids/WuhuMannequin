@@ -11,3 +11,9 @@ preload-on-join: true
 
 # How often (in seconds) to poll the API for pending skin generations
 poll-interval: 5
+
+# Interpolation ticks for display entity smoothing (0-10).
+# Higher = smoother movement but parts may drift slightly apart during rotation.
+# 0 = no interpolation, parts stay perfectly cohesive but motion is 20fps.
+# 3 = default smooth blending at ~60fps.
+interpolation-ticks: 3

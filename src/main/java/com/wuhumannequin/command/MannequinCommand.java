@@ -1,6 +1,7 @@
 package com.wuhumannequin.command;
 
 import com.wuhumannequin.WuhuMannequin;
+import org.bukkit.Location;
 import com.wuhumannequin.model.PlayerModel;
 import com.wuhumannequin.model.PlayerModelPose;
 import com.wuhumannequin.model.PlayerModelPoses;
@@ -74,7 +75,8 @@ public class MannequinCommand implements BasicCommand {
             case "pose" -> handlePose(player, args);
             case "remove" -> handleRemove(player);
             case "reload" -> handleReload(player);
-            case "fetchskin" -> handleFetchSkin(player);
+            case "fetchskin" -> handleFetchSkin(player, args);
+            case "interpolation" -> handleInterpolation(player, args);
             default -> showHelp(player);
         }
     }
@@ -82,10 +84,16 @@ public class MannequinCommand implements BasicCommand {
     @Override
     public @NotNull Collection<String> suggest(@NotNull CommandSourceStack stack, @NotNull String[] args) {
         if (args.length <= 1) {
-            return filter(List.of("spawn", "spin", "pose", "remove", "reload", "fetchskin"), args.length > 0 ? args[0] : "");
+            return filter(List.of("spawn", "spin", "pose", "remove", "reload", "fetchskin", "interpolation"), args.length > 0 ? args[0] : "");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("pose")) {
             return filter(List.of("standing", "sitting", "tpose", "arms_forward"), args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("fetchskin")) {
+            return filter(List.of("debug"), args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("interpolation")) {
+            return filter(List.of("0", "1", "2", "3", "5"), args[1]);
         }
         return List.of();
     }
@@ -110,8 +118,9 @@ public class MannequinCommand implements BasicCommand {
 
         PlayerModel model = createModelForPlayer(player);
         PlayerModelPose pose = PlayerModelPoses.STANDING;
-        model.spawn(player.getWorld(), player.getLocation(),
-                yawRotation(player.getLocation().getYaw()), pose);
+        Location spawnLoc = player.getLocation().add(0, 1, 0);
+        model.spawn(player.getWorld(), spawnLoc,
+                yawRotation(spawnLoc.getYaw()), pose);
 
         debugModels.put(uuid, model);
         currentPoses.put(uuid, pose);
@@ -124,13 +133,14 @@ public class MannequinCommand implements BasicCommand {
 
         PlayerModel model = createModelForPlayer(player);
         PlayerModelPose pose = PlayerModelPoses.STANDING;
-        model.spawn(player.getWorld(), player.getLocation(), new Quaternionf(), pose);
+        Location spawnLoc = player.getLocation().add(0, 1, 0);
+        model.spawn(player.getWorld(), spawnLoc, new Quaternionf(), pose);
 
         debugModels.put(uuid, model);
         currentPoses.put(uuid, pose);
 
         // Animate: rotate 2 degrees per tick on all axes in sequence
-        var location = player.getLocation().clone();
+        var location = spawnLoc.clone();
         BukkitRunnable task = new BukkitRunnable() {
             long tick = 0;
 
@@ -199,32 +209,70 @@ public class MannequinCommand implements BasicCommand {
         msg(player, "Pose set to " + poseName + ".");
     }
 
-    private void handleFetchSkin(Player player) {
+    private void handleFetchSkin(Player player, String[] args) {
         var apiClient = plugin.getSkinApiClient();
         if (apiClient == null || !apiClient.isConfigured()) {
             msg(player, "API not configured. Set private-key in config.yml and /mannequin reload.");
             return;
         }
 
-        msg(player, "Requesting skin generation from MannequinAPI...");
-        var detector = plugin.getSkinChangeDetector();
-        if (detector != null) {
-            detector.requestSkins(player.getUniqueId());
-            msg(player, "Request sent. Skins will be polled until ready. Use /mannequin spawn after.");
-        } else {
-            // Manual fetch without detector
-            apiClient.getSkins(player.getUniqueId()).thenAccept(result -> {
-                if (result.isPresent()) {
-                    plugin.getSkinCache().put(player.getUniqueId(), result.get());
-                    player.sendMessage(net.kyori.adventure.text.Component.text(
-                            "Skin textures loaded! Use /mannequin spawn to see them.",
-                            NamedTextColor.GREEN));
-                } else {
-                    player.sendMessage(net.kyori.adventure.text.Component.text(
-                            "Skins queued for generation. Try /mannequin fetchskin again in ~20s.",
-                            NamedTextColor.YELLOW));
+        // Determine which UUID to fetch: self, "debug", or a specific UUID
+        final UUID targetUuid;
+        final String label;
+        if (args.length >= 2) {
+            String arg = args[1].toLowerCase(Locale.ROOT);
+            if (arg.equals("debug")) {
+                targetUuid = new UUID(0, 0);
+                label = "debug skin";
+            } else {
+                UUID parsed = parseUuid(arg);
+                if (parsed == null) {
+                    msg(player, "Invalid UUID. Usage: /mannequin fetchskin [uuid|debug]");
+                    return;
                 }
-            });
+                targetUuid = parsed;
+                label = targetUuid.toString();
+            }
+        } else {
+            targetUuid = player.getUniqueId();
+            label = "your skin";
+        }
+
+        msg(player, "Requesting " + label + " from MannequinAPI...");
+
+        // Store textures under the PLAYER's UUID so they apply to their model
+        UUID storageUuid = player.getUniqueId();
+
+        apiClient.getSkins(targetUuid).thenAccept(result -> {
+            if (result.isPresent()) {
+                plugin.getSkinCache().put(storageUuid, result.get());
+                player.sendMessage(net.kyori.adventure.text.Component.text(
+                        "Skin textures loaded! Use /mannequin spawn to see them.",
+                        NamedTextColor.GREEN));
+            } else {
+                player.sendMessage(net.kyori.adventure.text.Component.text(
+                        "Skins queued for generation. Try again in ~50s.",
+                        NamedTextColor.YELLOW));
+                // Start polling
+                var detector = plugin.getSkinChangeDetector();
+                if (detector != null) {
+                    detector.requestSkins(targetUuid);
+                }
+            }
+        });
+    }
+
+    private void handleInterpolation(Player player, String[] args) {
+        if (args.length < 2) {
+            msg(player, "Current: " + PlayerModel.getInterpolationTicks() + " ticks. Usage: /mannequin interpolation <0-10>");
+            return;
+        }
+        try {
+            int ticks = Integer.parseInt(args[1]);
+            PlayerModel.setInterpolationTicks(ticks);
+            msg(player, "Interpolation set to " + PlayerModel.getInterpolationTicks() + " ticks. Respawn model to apply.");
+        } catch (NumberFormatException e) {
+            msg(player, "Invalid number. Usage: /mannequin interpolation <0-10>");
         }
     }
 
@@ -258,7 +306,8 @@ public class MannequinCommand implements BasicCommand {
         player.sendMessage(helpLine("/mannequin spin", "Spawn a spinning model (rotation test)"));
         player.sendMessage(helpLine("/mannequin pose <name>", "Change pose (standing, sitting, tpose, arms_forward)"));
         player.sendMessage(helpLine("/mannequin remove", "Remove debug model"));
-        player.sendMessage(helpLine("/mannequin fetchskin", "Manually trigger skin generation"));
+        player.sendMessage(helpLine("/mannequin interpolation <0-10>", "Set smoothing ticks (0=cohesive, 3=smooth)"));
+        player.sendMessage(helpLine("/mannequin fetchskin [uuid|debug]", "Fetch skins (self, UUID, or debug grid)"));
         player.sendMessage(helpLine("/mannequin reload", "Reload config"));
         player.sendMessage(Component.empty());
     }
@@ -284,6 +333,20 @@ public class MannequinCommand implements BasicCommand {
             }
         }
         return model;
+    }
+
+    private static UUID parseUuid(String input) {
+        try {
+            return UUID.fromString(input);
+        } catch (IllegalArgumentException e) {
+            try {
+                String dashed = input.replaceFirst(
+                        "(\\w{8})(\\w{4})(\\w{4})(\\w{4})(\\w{12})", "$1-$2-$3-$4-$5");
+                return UUID.fromString(dashed);
+            } catch (IllegalArgumentException e2) {
+                return null;
+            }
+        }
     }
 
     private static Quaternionf yawRotation(float yawDeg) {
