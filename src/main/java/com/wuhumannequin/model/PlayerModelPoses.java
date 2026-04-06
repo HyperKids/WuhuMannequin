@@ -45,6 +45,28 @@ public final class PlayerModelPoses {
             Map.of()
     );
 
+    /** Ejecting from plane: arms raised up, legs dangling loosely. */
+    public static final PlayerModelPose EJECTING = buildPose(
+            Map.of(
+                    "LEFT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-170)),
+                    "RIGHT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-170)),
+                    "LEFT_LEG", new Quaternionf().rotateX((float) Math.toRadians(15)),
+                    "RIGHT_LEG", new Quaternionf().rotateX((float) Math.toRadians(10))
+            ),
+            Map.of()
+    );
+
+    /** Holding parachute lines: arms up and slightly inward, legs hanging naturally. */
+    public static final PlayerModelPose PARACHUTING = buildPose(
+            Map.of(
+                    "LEFT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(10)),
+                    "RIGHT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(-10)),
+                    "LEFT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(-8)),
+                    "RIGHT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(8))
+            ),
+            Map.of()
+    );
+
     /**
      * Build a pose from logical-group-level rotations and offsets.
      * Automatically expands to both sub-parts of each limb.
