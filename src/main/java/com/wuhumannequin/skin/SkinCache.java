@@ -5,17 +5,24 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory cache of resolved skin textures per player.
+ * In-memory cache of resolved skin textures (and the player's skin model
+ * variant) per player.
  */
 public class SkinCache {
 
-    private final Map<UUID, Map<SkinTexture.BodyPartKey, SkinTexture>> cache = new ConcurrentHashMap<>();
+    /** Cached skin payload: textures + model variant. */
+    public record Entry(
+            Map<SkinTexture.BodyPartKey, SkinTexture> textures,
+            SkinTexture.Model model
+    ) {}
 
-    public void put(UUID uuid, Map<SkinTexture.BodyPartKey, SkinTexture> textures) {
-        cache.put(uuid, textures);
+    private final Map<UUID, Entry> cache = new ConcurrentHashMap<>();
+
+    public void put(UUID uuid, Map<SkinTexture.BodyPartKey, SkinTexture> textures, SkinTexture.Model model) {
+        cache.put(uuid, new Entry(textures, model == null ? SkinTexture.Model.CLASSIC : model));
     }
 
-    public Map<SkinTexture.BodyPartKey, SkinTexture> get(UUID uuid) {
+    public Entry get(UUID uuid) {
         return cache.get(uuid);
     }
 

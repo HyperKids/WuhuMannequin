@@ -58,13 +58,17 @@ public class SkinChangeDetector implements Listener {
         polling.add(uuid);
 
         apiClient.getSkins(uuid).thenAccept(result -> {
-            if (result.isPresent()) {
-                cache.put(uuid, result.get());
-                polling.remove(uuid);
-                plugin.getLogger().info("Loaded skin textures for " + uuid);
-            } else {
-                // Not ready yet — start polling
-                startPolling(uuid);
+            switch (result.status()) {
+                case READY -> {
+                    cache.put(uuid, result.textures(), result.model());
+                    polling.remove(uuid);
+                    plugin.getLogger().info("Loaded skin textures for " + uuid + " (model=" + result.model() + ")");
+                }
+                case GENERATING -> startPolling(uuid);
+                case ERROR -> {
+                    plugin.getLogger().warning("Skin fetch failed for " + uuid + ": " + result.errorMessage());
+                    polling.remove(uuid);
+                }
             }
         });
     }
@@ -79,11 +83,19 @@ public class SkinChangeDetector implements Listener {
                 }
 
                 apiClient.getSkins(uuid).thenAccept(result -> {
-                    if (result.isPresent()) {
-                        cache.put(uuid, result.get());
+                    if (result.status() == SkinFetchResult.Status.READY) {
+                        cache.put(uuid, result.textures(), result.model());
                         polling.remove(uuid);
-                        plugin.getLogger().info("Loaded skin textures for " + uuid);
+                        plugin.getLogger().info("Loaded skin textures for " + uuid + " (model=" + result.model() + ")");
                         // Cancel from main thread
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                SkinChangeDetector.this.cancelPolling(uuid);
+                            }
+                        }.runTask(plugin);
+                    } else if (result.status() == SkinFetchResult.Status.ERROR) {
+                        plugin.getLogger().warning("Skin poll failed for " + uuid + ": " + result.errorMessage());
                         new BukkitRunnable() {
                             @Override
                             public void run() {

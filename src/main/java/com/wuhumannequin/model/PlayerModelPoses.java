@@ -19,8 +19,19 @@ public final class PlayerModelPoses {
     /** Arms extended horizontally. */
     public static final PlayerModelPose T_POSE = buildPose(
             Map.of(
-                    "LEFT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(-90)),
-                    "RIGHT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(90))
+                    "LEFT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(90)),
+                    "RIGHT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(-90))
+            ),
+            Map.of()
+    );
+
+    /** Star jump: arms angled up-and-out 45° above horizontal, legs spread 45° outward. */
+    public static final PlayerModelPose X_POSE = buildPose(
+            Map.of(
+                    "LEFT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(135)),
+                    "RIGHT_ARM", new Quaternionf().rotateZ((float) Math.toRadians(-135)),
+                    "LEFT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(45)),
+                    "RIGHT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(-45))
             ),
             Map.of()
     );
@@ -59,10 +70,10 @@ public final class PlayerModelPoses {
     /** Holding parachute lines: arms up and slightly inward, legs hanging naturally. */
     public static final PlayerModelPose PARACHUTING = buildPose(
             Map.of(
-                    "LEFT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(10)),
-                    "RIGHT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(-10)),
-                    "LEFT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(-8)),
-                    "RIGHT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(8))
+                    "LEFT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(-10)),
+                    "RIGHT_ARM", new Quaternionf().rotateX((float) Math.toRadians(-160)).rotateZ((float) Math.toRadians(10)),
+                    "LEFT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(8)),
+                    "RIGHT_LEG", new Quaternionf().rotateZ((float) Math.toRadians(-8))
             ),
             Map.of()
     );

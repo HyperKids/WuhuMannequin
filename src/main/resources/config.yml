@@ -2,9 +2,9 @@
 api:
   # URL of the MannequinAPI backend
   url: "http://localhost:3001"
-  # Ed25519 private key (hex) for authenticating API requests.
-  # Get this from the MannequinAPI backend console on first startup.
-  private-key: ""
+  # API key for authenticating requests (starts with mnq_).
+  # Create one in the MannequinAPI dashboard under API Keys.
+  key: ""
 
 # Automatically request skin generation when a player joins
 preload-on-join: true

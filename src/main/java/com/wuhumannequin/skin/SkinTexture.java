@@ -6,6 +6,19 @@ package com.wuhumannequin.skin;
 public record SkinTexture(String value, String signature) {
 
     /**
+     * Player skin model variant. Mirrors MannequinAPI's `model` field.
+     * - CLASSIC (Steve): 4-pixel-wide arms
+     * - SLIM (Alex):     3-pixel-wide arms
+     */
+    public enum Model {
+        CLASSIC, SLIM;
+
+        public static Model fromString(String value) {
+            return value != null && value.equalsIgnoreCase("slim") ? SLIM : CLASSIC;
+        }
+    }
+
+    /**
      * Keys matching the MannequinAPI JSON response fields (camelCase).
      */
     public enum BodyPartKey {

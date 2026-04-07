@@ -29,15 +29,18 @@ public class WuhuMannequin extends JavaPlugin {
 
         // Skin API integration
         String apiUrl = getConfig().getString("api.url", "http://localhost:3001");
-        String privateKey = getConfig().getString("api.private-key", "");
+        String apiKey = getConfig().getString("api.key", "");
         int pollInterval = getConfig().getInt("poll-interval", 5);
         boolean preloadOnJoin = getConfig().getBoolean("preload-on-join", true);
 
         skinCache = new SkinCache();
-        skinApiClient = new SkinApiClient(apiUrl, privateKey, getLogger());
+        skinApiClient = new SkinApiClient(apiUrl, apiKey, getLogger());
 
         if (skinApiClient.isConfigured()) {
-            getLogger().info("MannequinAPI configured at " + apiUrl);
+            getLogger().info("MannequinAPI configured at " + apiUrl + " — validating key...");
+            // Validate asynchronously so onEnable doesn't block; bad keys will
+            // mark the client disabled before the first user fetch.
+            skinApiClient.validateKey();
 
             if (preloadOnJoin) {
                 skinChangeDetector = new SkinChangeDetector(this, skinApiClient, skinCache, pollInterval);
@@ -45,7 +48,7 @@ public class WuhuMannequin extends JavaPlugin {
                 getLogger().info("Skin preloading on player join enabled.");
             }
         } else {
-            getLogger().info("No API private key configured — using colored block fallback.");
+            getLogger().info("No API key configured — using colored block fallback.");
         }
 
         // Debug commands
@@ -96,22 +99,23 @@ public class WuhuMannequin extends JavaPlugin {
         }
 
         String apiUrl = getConfig().getString("api.url", "http://localhost:3001");
-        String privateKey = getConfig().getString("api.private-key", "");
+        String apiKey = getConfig().getString("api.key", "");
         int pollInterval = getConfig().getInt("poll-interval", 5);
         boolean preloadOnJoin = getConfig().getBoolean("preload-on-join", true);
 
         skinCache = new SkinCache();
-        skinApiClient = new SkinApiClient(apiUrl, privateKey, getLogger());
+        skinApiClient = new SkinApiClient(apiUrl, apiKey, getLogger());
 
         if (skinApiClient.isConfigured()) {
-            getLogger().info("MannequinAPI configured at " + apiUrl);
+            getLogger().info("MannequinAPI configured at " + apiUrl + " — validating key...");
+            skinApiClient.validateKey();
             if (preloadOnJoin) {
                 skinChangeDetector = new SkinChangeDetector(this, skinApiClient, skinCache, pollInterval);
                 getServer().getPluginManager().registerEvents(skinChangeDetector, this);
                 getLogger().info("Skin preloading on player join enabled.");
             }
         } else {
-            getLogger().info("No API private key configured — using colored block fallback.");
+            getLogger().info("No API key configured — using colored block fallback.");
         }
     }
 }

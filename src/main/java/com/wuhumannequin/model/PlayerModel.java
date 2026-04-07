@@ -42,6 +42,16 @@ public class PlayerModel {
     private static final EnumMap<BodyPart, Vector3f> PIVOT_OFFSETS = new EnumMap<>(BodyPart.class);
     private static final EnumMap<BodyPart, Material> DEFAULT_MATERIALS = new EnumMap<>(BodyPart.class);
 
+    // Slim arm overrides. The arm cube is 3 px wide on X (instead of 4), so:
+    //   - X scale becomes 0.375 (= 3/16 * 2, since FIXED ItemDisplay halves)
+    //   - The cube center shifts inward by 0.5/16 = 0.03125 to keep the inner
+    //     edge flush with the torso edge at ±0.25.
+    //   - Y/Z scales and pivot offsets are unchanged: arms are still 12 px tall
+    //     and 4 px deep, and the shoulder joint is still at the cube X-center.
+    private static final EnumMap<BodyPart, Vector3f> SLIM_ARM_REST_OFFSETS = new EnumMap<>(BodyPart.class);
+    private static final EnumMap<BodyPart, Vector3f> SLIM_ARM_SCALES = new EnumMap<>(BodyPart.class);
+    private static final float SLIM_ARM_X = 0.34375f; // 0.375 - 0.03125
+
     // Visual height of one sub-part
     private static final float SUB_H = 0.25f;
     // Half of that
@@ -60,25 +70,29 @@ public class PlayerModel {
         REST_OFFSETS.put(BodyPart.TORSO_MIDDLE, new Vector3f(0, 0, 0));
         REST_OFFSETS.put(BodyPart.TORSO_LOWER,  new Vector3f(0, -SUB_H, 0));
 
-        // Left arm: original center at (-0.375, 0, 0)
-        REST_OFFSETS.put(BodyPart.LEFT_ARM_UPPER,  new Vector3f(-0.375f, SUB_H, 0));
-        REST_OFFSETS.put(BodyPart.LEFT_ARM_MIDDLE, new Vector3f(-0.375f, 0, 0));
-        REST_OFFSETS.put(BodyPart.LEFT_ARM_LOWER,  new Vector3f(-0.375f, -SUB_H, 0));
+        // The model faces +Z (south) by default — the player_head item in FIXED
+        // display puts its front face on +Z. A south-facing body has its
+        // anatomical LEFT on +X (east) and anatomical RIGHT on -X (west).
 
-        // Right arm: original center at (0.375, 0, 0)
-        REST_OFFSETS.put(BodyPart.RIGHT_ARM_UPPER,  new Vector3f(0.375f, SUB_H, 0));
-        REST_OFFSETS.put(BodyPart.RIGHT_ARM_MIDDLE, new Vector3f(0.375f, 0, 0));
-        REST_OFFSETS.put(BodyPart.RIGHT_ARM_LOWER,  new Vector3f(0.375f, -SUB_H, 0));
+        // Left arm: original center at (+0.375, 0, 0)
+        REST_OFFSETS.put(BodyPart.LEFT_ARM_UPPER,  new Vector3f(0.375f, SUB_H, 0));
+        REST_OFFSETS.put(BodyPart.LEFT_ARM_MIDDLE, new Vector3f(0.375f, 0, 0));
+        REST_OFFSETS.put(BodyPart.LEFT_ARM_LOWER,  new Vector3f(0.375f, -SUB_H, 0));
 
-        // Left leg: original center at (-0.125, -0.75, 0)
-        REST_OFFSETS.put(BodyPart.LEFT_LEG_UPPER,  new Vector3f(-0.125f, -0.75f + SUB_H, 0));
-        REST_OFFSETS.put(BodyPart.LEFT_LEG_MIDDLE, new Vector3f(-0.125f, -0.75f, 0));
-        REST_OFFSETS.put(BodyPart.LEFT_LEG_LOWER,  new Vector3f(-0.125f, -0.75f - SUB_H, 0));
+        // Right arm: original center at (-0.375, 0, 0)
+        REST_OFFSETS.put(BodyPart.RIGHT_ARM_UPPER,  new Vector3f(-0.375f, SUB_H, 0));
+        REST_OFFSETS.put(BodyPart.RIGHT_ARM_MIDDLE, new Vector3f(-0.375f, 0, 0));
+        REST_OFFSETS.put(BodyPart.RIGHT_ARM_LOWER,  new Vector3f(-0.375f, -SUB_H, 0));
 
-        // Right leg: original center at (0.125, -0.75, 0)
-        REST_OFFSETS.put(BodyPart.RIGHT_LEG_UPPER,  new Vector3f(0.125f, -0.75f + SUB_H, 0));
-        REST_OFFSETS.put(BodyPart.RIGHT_LEG_MIDDLE, new Vector3f(0.125f, -0.75f, 0));
-        REST_OFFSETS.put(BodyPart.RIGHT_LEG_LOWER,  new Vector3f(0.125f, -0.75f - SUB_H, 0));
+        // Left leg: original center at (+0.125, -0.75, 0)
+        REST_OFFSETS.put(BodyPart.LEFT_LEG_UPPER,  new Vector3f(0.125f, -0.75f + SUB_H, 0));
+        REST_OFFSETS.put(BodyPart.LEFT_LEG_MIDDLE, new Vector3f(0.125f, -0.75f, 0));
+        REST_OFFSETS.put(BodyPart.LEFT_LEG_LOWER,  new Vector3f(0.125f, -0.75f - SUB_H, 0));
+
+        // Right leg: original center at (-0.125, -0.75, 0)
+        REST_OFFSETS.put(BodyPart.RIGHT_LEG_UPPER,  new Vector3f(-0.125f, -0.75f + SUB_H, 0));
+        REST_OFFSETS.put(BodyPart.RIGHT_LEG_MIDDLE, new Vector3f(-0.125f, -0.75f, 0));
+        REST_OFFSETS.put(BodyPart.RIGHT_LEG_LOWER,  new Vector3f(-0.125f, -0.75f - SUB_H, 0));
 
         // ── Scales ─────────────────────────────────────────────────────────
         // Head: 1.0 (renders as 0.5 block cube, matching 8×8×8 pixels)
@@ -141,6 +155,23 @@ public class PlayerModel {
             };
             DEFAULT_MATERIALS.put(p, mat);
         }
+
+        // ── Slim arm overrides ──────────────────────────────────────────────
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.LEFT_ARM_UPPER,  new Vector3f(SLIM_ARM_X, SUB_H, 0));
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.LEFT_ARM_MIDDLE, new Vector3f(SLIM_ARM_X, 0, 0));
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.LEFT_ARM_LOWER,  new Vector3f(SLIM_ARM_X, -SUB_H, 0));
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.RIGHT_ARM_UPPER,  new Vector3f(-SLIM_ARM_X, SUB_H, 0));
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.RIGHT_ARM_MIDDLE, new Vector3f(-SLIM_ARM_X, 0, 0));
+        SLIM_ARM_REST_OFFSETS.put(BodyPart.RIGHT_ARM_LOWER,  new Vector3f(-SLIM_ARM_X, -SUB_H, 0));
+        for (BodyPart p : new BodyPart[]{
+                BodyPart.LEFT_ARM_UPPER, BodyPart.LEFT_ARM_MIDDLE, BodyPart.LEFT_ARM_LOWER,
+                BodyPart.RIGHT_ARM_UPPER, BodyPart.RIGHT_ARM_MIDDLE, BodyPart.RIGHT_ARM_LOWER}) {
+            SLIM_ARM_SCALES.put(p, new Vector3f(0.375f, 0.5f, 0.5f));
+        }
+    }
+
+    private static boolean isArmPart(BodyPart p) {
+        return p.logicalGroup().equals("LEFT_ARM") || p.logicalGroup().equals("RIGHT_ARM");
     }
 
     private static int interpolationTicks = 3;
@@ -160,6 +191,7 @@ public class PlayerModel {
     private final EnumMap<BodyPart, SkinTexture> skinTextures = new EnumMap<>(BodyPart.class);
     private PlayerProfile headProfile;
     private boolean spawned;
+    private SkinTexture.Model armModel = SkinTexture.Model.CLASSIC;
 
     public PlayerModel() {
         fallbackMaterials.putAll(DEFAULT_MATERIALS);
@@ -176,11 +208,37 @@ public class PlayerModel {
     }
 
     public void setSkinTextures(Map<SkinTexture.BodyPartKey, SkinTexture> textures) {
+        setSkinTextures(textures, SkinTexture.Model.CLASSIC);
+    }
+
+    /**
+     * Set skin textures and the player's model variant. Slim (Alex) skins use
+     * narrower arm cubes and slightly different rest offsets so the inner edge
+     * still meets the torso.
+     */
+    public void setSkinTextures(Map<SkinTexture.BodyPartKey, SkinTexture> textures, SkinTexture.Model model) {
         skinTextures.clear();
         for (var entry : textures.entrySet()) {
             BodyPart part = bodyPartFromKey(entry.getKey());
             if (part != null) skinTextures.put(part, entry.getValue());
         }
+        this.armModel = model == null ? SkinTexture.Model.CLASSIC : model;
+    }
+
+    /** Returns the rest offset for a part, accounting for slim-arm geometry. */
+    private Vector3f restOffsetFor(BodyPart part) {
+        if (armModel == SkinTexture.Model.SLIM && isArmPart(part)) {
+            return SLIM_ARM_REST_OFFSETS.get(part);
+        }
+        return REST_OFFSETS.get(part);
+    }
+
+    /** Returns the scale for a part, accounting for slim-arm geometry. */
+    private Vector3f scaleFor(BodyPart part) {
+        if (armModel == SkinTexture.Model.SLIM && isArmPart(part)) {
+            return SLIM_ARM_SCALES.get(part);
+        }
+        return SCALES.get(part);
     }
 
     private static BodyPart bodyPartFromKey(SkinTexture.BodyPartKey key) {
@@ -243,7 +301,7 @@ public class PlayerModel {
                 center.getZ() + t.worldPosition.z, 0, 0);
 
         ItemStack item = createItem(part);
-        Vector3f scale = new Vector3f(SCALES.get(part));
+        Vector3f scale = new Vector3f(scaleFor(part));
 
         return world.spawn(spawnLoc, ItemDisplay.class, display -> {
             display.setItemStack(item);
@@ -269,14 +327,14 @@ public class PlayerModel {
                 center.getZ() + t.worldPosition.z, 0, 0);
         entity.teleport(loc);
 
-        Vector3f scale = new Vector3f(SCALES.get(part));
+        Vector3f scale = new Vector3f(scaleFor(part));
         entity.setInterpolationDelay(0);
         entity.setTransformation(new Transformation(
                 t.translation, t.leftRotation, scale, new Quaternionf()));
     }
 
     private PartTransform computeTransform(Quaternionf worldRotation, PlayerModelPose pose, BodyPart part) {
-        Vector3f restOffset = new Vector3f(REST_OFFSETS.get(part));
+        Vector3f restOffset = new Vector3f(restOffsetFor(part));
         Vector3f pivotOffset = new Vector3f(PIVOT_OFFSETS.get(part));
         Vector3f poseOffsetAdj = pose.getOffsetAdjustment(part);
         Quaternionf poseRotation = pose.getRotation(part);

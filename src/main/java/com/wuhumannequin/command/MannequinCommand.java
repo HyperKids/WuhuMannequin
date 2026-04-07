@@ -45,6 +45,7 @@ public class MannequinCommand implements BasicCommand {
             "standing", PlayerModelPoses.STANDING,
             "sitting", PlayerModelPoses.SITTING,
             "tpose", PlayerModelPoses.T_POSE,
+            "xpose", PlayerModelPoses.X_POSE,
             "arms_forward", PlayerModelPoses.ARMS_FORWARD
     );
 
@@ -87,7 +88,7 @@ public class MannequinCommand implements BasicCommand {
             return filter(List.of("spawn", "spin", "pose", "remove", "reload", "fetchskin", "interpolation"), args.length > 0 ? args[0] : "");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("pose")) {
-            return filter(List.of("standing", "sitting", "tpose", "arms_forward"), args[1]);
+            return filter(List.of("standing", "sitting", "tpose", "xpose", "arms_forward"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("fetchskin")) {
             return filter(List.of("debug"), args[1]);
@@ -164,7 +165,8 @@ public class MannequinCommand implements BasicCommand {
                 } else if (phase == 2) {
                     rotation.rotateZ(phaseAngle);
                 } else {
-                    rotation.rotateYXZ(phaseAngle * 0.7f, phaseAngle * 0.5f, phaseAngle * 0.3f);
+                    // Integer multipliers so all axes complete whole turns and end at identity
+                    rotation.rotateYXZ(phaseAngle * 1f, phaseAngle * 2f, phaseAngle * 3f);
                 }
 
                 PlayerModelPose currentPose = currentPoses.getOrDefault(uuid, PlayerModelPoses.STANDING);
@@ -187,14 +189,14 @@ public class MannequinCommand implements BasicCommand {
         }
 
         if (args.length < 2) {
-            msg(player, "Usage: /mannequin pose <standing|sitting|tpose|arms_forward>");
+            msg(player, "Usage: /mannequin pose <standing|sitting|tpose|xpose|arms_forward>");
             return;
         }
 
         String poseName = args[1].toLowerCase(Locale.ROOT);
         PlayerModelPose pose = POSE_MAP.get(poseName);
         if (pose == null) {
-            msg(player, "Unknown pose. Options: standing, sitting, tpose, arms_forward");
+            msg(player, "Unknown pose. Options: standing, sitting, tpose, xpose, arms_forward");
             return;
         }
 
@@ -212,7 +214,12 @@ public class MannequinCommand implements BasicCommand {
     private void handleFetchSkin(Player player, String[] args) {
         var apiClient = plugin.getSkinApiClient();
         if (apiClient == null || !apiClient.isConfigured()) {
-            msg(player, "API not configured. Set private-key in config.yml and /mannequin reload.");
+            String reason = (apiClient != null && apiClient.disabledReason() != null)
+                    ? apiClient.disabledReason()
+                    : "no API key set";
+            player.sendMessage(net.kyori.adventure.text.Component.text(
+                    "MannequinAPI unavailable: " + reason + ". Fix api.key in config.yml and /mannequin reload.",
+                    NamedTextColor.RED));
             return;
         }
 
@@ -238,26 +245,32 @@ public class MannequinCommand implements BasicCommand {
             label = "your skin";
         }
 
-        msg(player, "Requesting " + label + " from MannequinAPI...");
-
         // Store textures under the PLAYER's UUID so they apply to their model
         UUID storageUuid = player.getUniqueId();
 
+        // No optimistic "Requesting..." chat — wait until the API actually
+        // answers before saying anything, so we never tell the user their
+        // skins were queued when in reality the request failed.
         apiClient.getSkins(targetUuid).thenAccept(result -> {
-            if (result.isPresent()) {
-                plugin.getSkinCache().put(storageUuid, result.get());
-                player.sendMessage(net.kyori.adventure.text.Component.text(
-                        "Skin textures loaded! Use /mannequin spawn to see them.",
-                        NamedTextColor.GREEN));
-            } else {
-                player.sendMessage(net.kyori.adventure.text.Component.text(
-                        "Skins queued for generation. Try again in ~50s.",
-                        NamedTextColor.YELLOW));
-                // Start polling
-                var detector = plugin.getSkinChangeDetector();
-                if (detector != null) {
-                    detector.requestSkins(targetUuid);
+            switch (result.status()) {
+                case READY -> {
+                    plugin.getSkinCache().put(storageUuid, result.textures(), result.model());
+                    player.sendMessage(net.kyori.adventure.text.Component.text(
+                            "Skin textures loaded for " + label + " (" + result.model() + "). Use /mannequin spawn to see them.",
+                            NamedTextColor.GREEN));
                 }
+                case GENERATING -> {
+                    player.sendMessage(net.kyori.adventure.text.Component.text(
+                            "Server is generating " + label + " (this can take ~50s). Polling started — re-run /mannequin fetchskin once it finishes.",
+                            NamedTextColor.YELLOW));
+                    var detector = plugin.getSkinChangeDetector();
+                    if (detector != null) {
+                        detector.requestSkins(targetUuid);
+                    }
+                }
+                case ERROR -> player.sendMessage(net.kyori.adventure.text.Component.text(
+                        "Failed to fetch " + label + ": " + result.errorMessage(),
+                        NamedTextColor.RED));
             }
         });
     }
@@ -304,7 +317,7 @@ public class MannequinCommand implements BasicCommand {
         player.sendMessage(Component.text("─── WuhuMannequin Debug ───", NamedTextColor.GOLD));
         player.sendMessage(helpLine("/mannequin spawn", "Spawn/toggle a static model"));
         player.sendMessage(helpLine("/mannequin spin", "Spawn a spinning model (rotation test)"));
-        player.sendMessage(helpLine("/mannequin pose <name>", "Change pose (standing, sitting, tpose, arms_forward)"));
+        player.sendMessage(helpLine("/mannequin pose <name>", "Change pose (standing, sitting, tpose, xpose, arms_forward)"));
         player.sendMessage(helpLine("/mannequin remove", "Remove debug model"));
         player.sendMessage(helpLine("/mannequin interpolation <0-10>", "Set smoothing ticks (0=cohesive, 3=smooth)"));
         player.sendMessage(helpLine("/mannequin fetchskin [uuid|debug]", "Fetch skins (self, UUID, or debug grid)"));
@@ -327,9 +340,9 @@ public class MannequinCommand implements BasicCommand {
 
         SkinCache cache = plugin.getSkinCache();
         if (cache != null) {
-            var textures = cache.get(player.getUniqueId());
-            if (textures != null) {
-                model.setSkinTextures(textures);
+            var entry = cache.get(player.getUniqueId());
+            if (entry != null) {
+                model.setSkinTextures(entry.textures(), entry.model());
             }
         }
         return model;
