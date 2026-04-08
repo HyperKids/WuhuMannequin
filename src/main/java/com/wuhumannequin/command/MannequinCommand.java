@@ -3,6 +3,8 @@ package com.wuhumannequin.command;
 import com.wuhumannequin.WuhuMannequin;
 import org.bukkit.Location;
 import com.wuhumannequin.model.PlayerModel;
+import com.wuhumannequin.model.PlayerModelAnimation;
+import com.wuhumannequin.model.PlayerModelAnimations;
 import com.wuhumannequin.model.PlayerModelPose;
 import com.wuhumannequin.model.PlayerModelPoses;
 import com.wuhumannequin.skin.SkinCache;
@@ -39,15 +41,15 @@ public class MannequinCommand implements BasicCommand {
     private final WuhuMannequin plugin;
     private final Map<UUID, PlayerModel> debugModels = new HashMap<>();
     private final Map<UUID, BukkitRunnable> spinTasks = new HashMap<>();
+    private final Map<UUID, BukkitRunnable> animationTasks = new HashMap<>();
     private final Map<UUID, PlayerModelPose> currentPoses = new HashMap<>();
+    /** Stable spawn location + yaw per model. Pose/animation updates anchor here so the
+     *  model doesn't drift toward the player every time you re-issue a command. */
+    private final Map<UUID, Location> modelAnchors = new HashMap<>();
+    private final Map<UUID, Float> modelYaws = new HashMap<>();
 
-    private static final Map<String, PlayerModelPose> POSE_MAP = Map.of(
-            "standing", PlayerModelPoses.STANDING,
-            "sitting", PlayerModelPoses.SITTING,
-            "tpose", PlayerModelPoses.T_POSE,
-            "xpose", PlayerModelPoses.X_POSE,
-            "arms_forward", PlayerModelPoses.ARMS_FORWARD
-    );
+    private static final Map<String, PlayerModelPose> POSE_MAP = PlayerModelPoses.ALL;
+    private static final Map<String, PlayerModelAnimation> ANIMATION_MAP = PlayerModelAnimations.ALL;
 
     public MannequinCommand(WuhuMannequin plugin) {
         this.plugin = plugin;
@@ -74,6 +76,7 @@ public class MannequinCommand implements BasicCommand {
             case "spawn" -> handleSpawn(player);
             case "spin" -> handleSpin(player);
             case "pose" -> handlePose(player, args);
+            case "animation", "anim" -> handleAnimation(player, args);
             case "remove" -> handleRemove(player);
             case "reload" -> handleReload(player);
             case "fetchskin" -> handleFetchSkin(player, args);
@@ -85,10 +88,15 @@ public class MannequinCommand implements BasicCommand {
     @Override
     public @NotNull Collection<String> suggest(@NotNull CommandSourceStack stack, @NotNull String[] args) {
         if (args.length <= 1) {
-            return filter(List.of("spawn", "spin", "pose", "remove", "reload", "fetchskin", "interpolation"), args.length > 0 ? args[0] : "");
+            return filter(List.of("spawn", "spin", "pose", "animation", "remove", "reload", "fetchskin", "interpolation"), args.length > 0 ? args[0] : "");
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("pose")) {
-            return filter(List.of("standing", "sitting", "tpose", "xpose", "arms_forward"), args[1]);
+            return filter(POSE_MAP.keySet(), args[1]);
+        }
+        if (args.length == 2 && (args[0].equalsIgnoreCase("animation") || args[0].equalsIgnoreCase("anim"))) {
+            List<String> options = new java.util.ArrayList<>(ANIMATION_MAP.keySet());
+            options.add("stop");
+            return filter(options, args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("fetchskin")) {
             return filter(List.of("debug"), args[1]);
@@ -103,9 +111,13 @@ public class MannequinCommand implements BasicCommand {
     public void cleanupAll() {
         for (BukkitRunnable task : spinTasks.values()) task.cancel();
         spinTasks.clear();
+        for (BukkitRunnable task : animationTasks.values()) task.cancel();
+        animationTasks.clear();
         for (PlayerModel model : debugModels.values()) model.despawn();
         debugModels.clear();
         currentPoses.clear();
+        modelAnchors.clear();
+        modelYaws.clear();
     }
 
     // ── Subcommand handlers ─────────────────────────────────────────────────
@@ -125,6 +137,8 @@ public class MannequinCommand implements BasicCommand {
 
         debugModels.put(uuid, model);
         currentPoses.put(uuid, pose);
+        modelAnchors.put(uuid, spawnLoc.clone());
+        modelYaws.put(uuid, spawnLoc.getYaw());
         msg(player, "Debug model spawned. Use /mannequin remove to clean up.");
     }
 
@@ -139,6 +153,8 @@ public class MannequinCommand implements BasicCommand {
 
         debugModels.put(uuid, model);
         currentPoses.put(uuid, pose);
+        modelAnchors.put(uuid, spawnLoc.clone());
+        modelYaws.put(uuid, 0f);
 
         // Animate: rotate 2 degrees per tick on all axes in sequence
         var location = spawnLoc.clone();
@@ -189,26 +205,99 @@ public class MannequinCommand implements BasicCommand {
         }
 
         if (args.length < 2) {
-            msg(player, "Usage: /mannequin pose <standing|sitting|tpose|xpose|arms_forward>");
+            msg(player, "Usage: /mannequin pose <name>. Options: " + String.join(", ", POSE_MAP.keySet()));
             return;
         }
 
         String poseName = args[1].toLowerCase(Locale.ROOT);
         PlayerModelPose pose = POSE_MAP.get(poseName);
         if (pose == null) {
-            msg(player, "Unknown pose. Options: standing, sitting, tpose, xpose, arms_forward");
+            msg(player, "Unknown pose '" + poseName + "'. Options: " + String.join(", ", POSE_MAP.keySet()));
             return;
         }
 
+        // A static pose overrides any running animation.
+        BukkitRunnable existingAnim = animationTasks.remove(uuid);
+        if (existingAnim != null) existingAnim.cancel();
+
         currentPoses.put(uuid, pose);
 
-        // If not spinning, apply immediately
+        // If not spinning, apply immediately at the model's anchored location/yaw — never
+        // teleport the model to wherever the player happens to be standing right now.
         if (!spinTasks.containsKey(uuid)) {
-            model.update(player.getLocation(),
-                    yawRotation(player.getLocation().getYaw()), pose);
+            Location anchor = modelAnchors.getOrDefault(uuid, player.getLocation());
+            float yaw = modelYaws.getOrDefault(uuid, anchor.getYaw());
+            model.update(anchor, yawRotation(yaw), pose);
         }
 
         msg(player, "Pose set to " + poseName + ".");
+    }
+
+    private void handleAnimation(Player player, String[] args) {
+        UUID uuid = player.getUniqueId();
+        PlayerModel model = debugModels.get(uuid);
+        if (model == null) {
+            msg(player, "No debug model active. Use /mannequin spawn first.");
+            return;
+        }
+
+        if (args.length < 2) {
+            msg(player, "Usage: /mannequin animation <name|stop>. Options: " + String.join(", ", ANIMATION_MAP.keySet()));
+            return;
+        }
+
+        String name = args[1].toLowerCase(Locale.ROOT);
+
+        // Always stop any currently running animation or spin first — both write the model
+        // every tick and would otherwise fight for control.
+        BukkitRunnable existing = animationTasks.remove(uuid);
+        if (existing != null) existing.cancel();
+        BukkitRunnable spin = spinTasks.remove(uuid);
+        if (spin != null) spin.cancel();
+
+        if (name.equals("stop") || name.equals("none")) {
+            // Restore the last static pose (or standing) so the model doesn't freeze mid-frame.
+            PlayerModelPose restorePose = currentPoses.getOrDefault(uuid, PlayerModelPoses.STANDING);
+            if (!spinTasks.containsKey(uuid)) {
+                Location anchor = modelAnchors.getOrDefault(uuid, player.getLocation());
+                float yaw = modelYaws.getOrDefault(uuid, anchor.getYaw());
+                model.update(anchor, yawRotation(yaw), restorePose);
+            }
+            msg(player, "Animation stopped.");
+            return;
+        }
+
+        PlayerModelAnimation animation = ANIMATION_MAP.get(name);
+        if (animation == null) {
+            msg(player, "Unknown animation '" + name + "'. Options: " + String.join(", ", ANIMATION_MAP.keySet()));
+            return;
+        }
+
+        // Animations replace the static pose while running. Use the model's stable spawn
+        // anchor so each new animation doesn't snap the model to the player's current spot.
+        Location anchor = modelAnchors.getOrDefault(uuid, player.getLocation().add(0, 1, 0));
+        float yaw = modelYaws.getOrDefault(uuid, anchor.getYaw());
+        Quaternionf bodyRotation = yawRotation(yaw);
+
+        BukkitRunnable task = new BukkitRunnable() {
+            long tick = 0;
+
+            @Override
+            public void run() {
+                if (!model.isSpawned()) {
+                    cancel();
+                    animationTasks.remove(uuid);
+                    return;
+                }
+                PlayerModelPose pose = animation.poseAt(tick);
+                model.update(anchor, bodyRotation, pose);
+                tick++;
+            }
+        };
+        task.runTaskTimer(plugin, 1L, 1L);
+        animationTasks.put(uuid, task);
+
+        msg(player, "Animation '" + name + "' started. Use /mannequin animation stop to end it.");
     }
 
     private void handleFetchSkin(Player player, String[] args) {
@@ -299,6 +388,8 @@ public class MannequinCommand implements BasicCommand {
         UUID uuid = player.getUniqueId();
         BukkitRunnable task = spinTasks.remove(uuid);
         if (task != null) task.cancel();
+        BukkitRunnable animTask = animationTasks.remove(uuid);
+        if (animTask != null) animTask.cancel();
 
         PlayerModel model = debugModels.remove(uuid);
         if (model != null) {
@@ -308,6 +399,8 @@ public class MannequinCommand implements BasicCommand {
             msg(player, "No debug model to remove.");
         }
         currentPoses.remove(uuid);
+        modelAnchors.remove(uuid);
+        modelYaws.remove(uuid);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -317,7 +410,8 @@ public class MannequinCommand implements BasicCommand {
         player.sendMessage(Component.text("─── WuhuMannequin Debug ───", NamedTextColor.GOLD));
         player.sendMessage(helpLine("/mannequin spawn", "Spawn/toggle a static model"));
         player.sendMessage(helpLine("/mannequin spin", "Spawn a spinning model (rotation test)"));
-        player.sendMessage(helpLine("/mannequin pose <name>", "Change pose (standing, sitting, tpose, xpose, arms_forward)"));
+        player.sendMessage(helpLine("/mannequin pose <name>", "Change static pose (" + POSE_MAP.size() + " options, tab-complete)"));
+        player.sendMessage(helpLine("/mannequin animation <name|stop>", "Play animation (" + ANIMATION_MAP.size() + " options, tab-complete)"));
         player.sendMessage(helpLine("/mannequin remove", "Remove debug model"));
         player.sendMessage(helpLine("/mannequin interpolation <0-10>", "Set smoothing ticks (0=cohesive, 3=smooth)"));
         player.sendMessage(helpLine("/mannequin fetchskin [uuid|debug]", "Fetch skins (self, UUID, or debug grid)"));

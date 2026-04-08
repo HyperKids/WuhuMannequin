@@ -126,18 +126,18 @@ public class PlayerModel {
             PIVOT_OFFSETS.put(p, new Vector3f(0, 0, 0));
         }
 
-        // Arms and legs: joint at top of upper sub-part
+        // Arms and legs: each sub-part pivots at its OWN top edge — i.e., a joint shared
+        // with the segment immediately above it in the hierarchical chain:
+        //   UPPER pivots at the shoulder/hip (top of UPPER)
+        //   MIDDLE pivots at the elbow/knee  (top of MIDDLE = bottom of UPPER)
+        //   LOWER pivots at the wrist/ankle  (top of LOWER  = bottom of MIDDLE)
+        // The hierarchical compute in computeAllTransforms() walks this chain and places
+        // each segment so its top edge meets its parent's bottom edge in world space —
+        // when local rotations are identity the limb behaves as a rigid block.
         for (String group : new String[]{"LEFT_ARM", "RIGHT_ARM", "LEFT_LEG", "RIGHT_LEG"}) {
             for (BodyPart p : BodyPart.values()) {
                 if (!p.logicalGroup().equals(group)) continue;
-                String suffix = p.name().substring(group.length() + 1); // UPPER, MIDDLE, or LOWER
-                float pivotY = switch (suffix) {
-                    case "UPPER"  -> SUB_HALF;
-                    case "MIDDLE" -> SUB_HALF + SUB_H;
-                    case "LOWER"  -> SUB_HALF + 2 * SUB_H;
-                    default -> 0;
-                };
-                PIVOT_OFFSETS.put(p, new Vector3f(0, pivotY, 0));
+                PIVOT_OFFSETS.put(p, new Vector3f(0, SUB_HALF, 0));
             }
         }
 
@@ -266,15 +266,17 @@ public class PlayerModel {
 
     public void spawn(World world, Location center, Quaternionf rotation, PlayerModelPose pose) {
         despawn();
+        Map<BodyPart, PartTransform> transforms = computeAllTransforms(rotation, pose);
         for (BodyPart part : BodyPart.values()) {
-            entities.put(part, spawnPart(world, center, rotation, pose, part));
+            entities.put(part, spawnPart(world, center, transforms.get(part), part));
         }
         spawned = true;
     }
 
     public void update(Location center, Quaternionf rotation, PlayerModelPose pose) {
+        Map<BodyPart, PartTransform> transforms = computeAllTransforms(rotation, pose);
         for (BodyPart part : BodyPart.values()) {
-            updatePart(center, rotation, pose, part);
+            updatePart(center, transforms.get(part), part);
         }
     }
 
@@ -292,9 +294,7 @@ public class PlayerModel {
 
     // ── Internal ────────────────────────────────────────────────────────────
 
-    private ItemDisplay spawnPart(World world, Location center, Quaternionf rotation,
-                                  PlayerModelPose pose, BodyPart part) {
-        PartTransform t = computeTransform(rotation, pose, part);
+    private ItemDisplay spawnPart(World world, Location center, PartTransform t, BodyPart part) {
         Location spawnLoc = new Location(world,
                 center.getX() + t.worldPosition.x,
                 center.getY() + t.worldPosition.y,
@@ -315,12 +315,10 @@ public class PlayerModel {
         });
     }
 
-    private void updatePart(Location center, Quaternionf rotation,
-                            PlayerModelPose pose, BodyPart part) {
+    private void updatePart(Location center, PartTransform t, BodyPart part) {
         ItemDisplay entity = entities.get(part);
         if (entity == null || !entity.isValid()) return;
 
-        PartTransform t = computeTransform(rotation, pose, part);
         Location loc = new Location(center.getWorld(),
                 center.getX() + t.worldPosition.x,
                 center.getY() + t.worldPosition.y,
@@ -333,7 +331,108 @@ public class PlayerModel {
                 t.translation, t.leftRotation, scale, new Quaternionf()));
     }
 
-    private PartTransform computeTransform(Quaternionf worldRotation, PlayerModelPose pose, BodyPart part) {
+    /**
+     * Compute body-frame transforms for every sub-part in one pass. Head and torso parts
+     * use the simple "rotate around own pivot" path. Limbs use a hierarchical chain so
+     * that an elbow rotation actually bends the limb (and the forearm visually meets the
+     * upper arm at the elbow joint, no air gap).
+     *
+     * <p>For limbs the pose stores rotations per sub-part with these semantics:
+     * <ul>
+     *   <li>{@code *_UPPER} = shoulder rotation (in body frame)</li>
+     *   <li>{@code *_MIDDLE} = elbow rotation (in the upper arm's local frame)</li>
+     *   <li>{@code *_LOWER} = wrist rotation (in the forearm's local frame)</li>
+     * </ul>
+     * Identity at elbow + wrist gives a rigid limb. {@link PlayerModelPoses#buildPose}
+     * preserves rigid-limb behavior by setting only the UPPER key.
+     */
+    private Map<BodyPart, PartTransform> computeAllTransforms(Quaternionf worldRotation, PlayerModelPose pose) {
+        EnumMap<BodyPart, PartTransform> result = new EnumMap<>(BodyPart.class);
+
+        // Head + torso: each rotates around its own pivot, no chain.
+        for (BodyPart p : new BodyPart[]{
+                BodyPart.HEAD,
+                BodyPart.TORSO_UPPER, BodyPart.TORSO_MIDDLE, BodyPart.TORSO_LOWER}) {
+            result.put(p, computeSimpleTransform(worldRotation, pose, p));
+        }
+
+        // Limbs: walk shoulder → elbow → wrist for each of the four limbs.
+        computeLimbChain(worldRotation, pose, result,
+                BodyPart.LEFT_ARM_UPPER, BodyPart.LEFT_ARM_MIDDLE, BodyPart.LEFT_ARM_LOWER);
+        computeLimbChain(worldRotation, pose, result,
+                BodyPart.RIGHT_ARM_UPPER, BodyPart.RIGHT_ARM_MIDDLE, BodyPart.RIGHT_ARM_LOWER);
+        computeLimbChain(worldRotation, pose, result,
+                BodyPart.LEFT_LEG_UPPER, BodyPart.LEFT_LEG_MIDDLE, BodyPart.LEFT_LEG_LOWER);
+        computeLimbChain(worldRotation, pose, result,
+                BodyPart.RIGHT_LEG_UPPER, BodyPart.RIGHT_LEG_MIDDLE, BodyPart.RIGHT_LEG_LOWER);
+
+        return result;
+    }
+
+    /**
+     * Walk one limb's three-segment chain. Each segment's joint position depends on the
+     * cumulative rotation of every segment above it, so the chain order matters.
+     */
+    private void computeLimbChain(Quaternionf worldRotation, PlayerModelPose pose,
+                                  Map<BodyPart, PartTransform> out,
+                                  BodyPart upper, BodyPart middle, BodyPart lower) {
+        // Local joint rotations (default: identity → rigid limb).
+        Quaternionf rShoulderLocal = pose.getRotation(upper);
+        Quaternionf rElbowLocal = pose.getRotation(middle);
+        Quaternionf rWristLocal = pose.getRotation(lower);
+
+        // Cumulative segment orientations in body frame.
+        Quaternionf rUpper = new Quaternionf(rShoulderLocal);
+        Quaternionf rMiddle = new Quaternionf(rUpper).mul(rElbowLocal);
+        Quaternionf rLower = new Quaternionf(rMiddle).mul(rWristLocal);
+
+        // Shoulder joint (top of UPPER) — fixed in body frame.
+        Vector3f shoulderJoint = new Vector3f(restOffsetFor(upper)).add(PIVOT_OFFSETS.get(upper));
+
+        // UPPER center = joint + R_upper × (0, -SUB_HALF, 0)
+        Vector3f upperCenter = segmentCenter(shoulderJoint, rUpper);
+        out.put(upper, finishTransform(worldRotation, rUpper, upperCenter, pose.getOffsetAdjustment(upper)));
+
+        // Elbow joint = bottom of UPPER in body frame.
+        Vector3f elbowJoint = new Vector3f(shoulderJoint).add(rotated(rUpper, 0, -SUB_H, 0));
+
+        // MIDDLE center = elbowJoint + R_middle × (0, -SUB_HALF, 0)
+        Vector3f middleCenter = segmentCenter(elbowJoint, rMiddle);
+        out.put(middle, finishTransform(worldRotation, rMiddle, middleCenter, pose.getOffsetAdjustment(middle)));
+
+        // Wrist joint = bottom of MIDDLE in body frame.
+        Vector3f wristJoint = new Vector3f(elbowJoint).add(rotated(rMiddle, 0, -SUB_H, 0));
+
+        // LOWER center = wristJoint + R_lower × (0, -SUB_HALF, 0)
+        Vector3f lowerCenter = segmentCenter(wristJoint, rLower);
+        out.put(lower, finishTransform(worldRotation, rLower, lowerCenter, pose.getOffsetAdjustment(lower)));
+    }
+
+    /** A segment's center sits SUB_HALF below its top joint, in the segment's rotated frame. */
+    private static Vector3f segmentCenter(Vector3f topJoint, Quaternionf segmentOrientation) {
+        return new Vector3f(topJoint).add(rotated(segmentOrientation, 0, -SUB_HALF, 0));
+    }
+
+    /** Allocate a fresh vector and rotate it by {@code q}. */
+    private static Vector3f rotated(Quaternionf q, float x, float y, float z) {
+        return q.transform(new Vector3f(x, y, z));
+    }
+
+    /**
+     * Finalize a part transform: add offset adjustments in body frame, apply the world body
+     * rotation to get the part's position relative to the model's anchor, and combine the
+     * world rotation with the segment's local orientation for the entity rotation.
+     */
+    private PartTransform finishTransform(Quaternionf worldRotation, Quaternionf localOrientation,
+                                          Vector3f bodyFrameCenter, Vector3f offsetAdj) {
+        Vector3f totalLocal = new Vector3f(bodyFrameCenter).add(offsetAdj);
+        Vector3f worldPos = worldRotation.transform(new Vector3f(totalLocal));
+        Quaternionf finalRotation = new Quaternionf(worldRotation).mul(localOrientation);
+        return new PartTransform(worldPos, new Vector3f(), finalRotation);
+    }
+
+    /** Single-segment transform (head, torso). Each part rotates around its own pivot. */
+    private PartTransform computeSimpleTransform(Quaternionf worldRotation, PlayerModelPose pose, BodyPart part) {
         Vector3f restOffset = new Vector3f(restOffsetFor(part));
         Vector3f pivotOffset = new Vector3f(PIVOT_OFFSETS.get(part));
         Vector3f poseOffsetAdj = pose.getOffsetAdjustment(part);
